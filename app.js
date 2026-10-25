@@ -487,3 +487,118 @@ if ("serviceWorker" in navigator) {
 
 /* ---------- initial render ---------- */
 render();
+/* ---------- 印刷・PDF出力（app.js の一番最後に追加） ---------- */
+(function () {
+  const style = document.createElement("style");
+  style.textContent = `
+    .print-btn-wrap { margin: 12px 0; text-align: right; }
+    #printArea { display: none; }
+    @media print {
+      body.printing > *:not(#printArea) { display: none !important; }
+      body.printing #printArea { display: block !important; color: #000; background: #fff; font-size: 11px; }
+      #printArea h1 { font-size: 16px; margin: 0 0 4px; }
+      #printArea .p-sub { font-size: 11px; margin-bottom: 8px; }
+      #printArea h2 { font-size: 13px; margin: 14px 0 4px; page-break-after: avoid; }
+      #printArea table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+      #printArea th, #printArea td { border: 1px solid #333; padding: 3px 5px; text-align: left; }
+      #printArea td.num { text-align: right; }
+      #printArea tr { page-break-inside: avoid; }
+      @page { size: A4; margin: 12mm; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const today = () => new Date().toISOString().slice(0, 10);
+  const byDate = (a, b) => (a.date === b.date ? 0 : a.date > b.date ? 1 : -1);
+
+  function journalHtml() {
+    const rows = [...state.entries].sort(byDate);
+    return `
+      <h1>仕訳帳</h1>
+      <div class="p-sub">祥燿　出力日：${today()}　件数：${rows.length}件</div>
+      <table>
+        <thead><tr><th>日付</th><th>摘要</th><th>借方科目</th><th>借方金額</th><th>貸方科目</th><th>貸方金額</th></tr></thead>
+        <tbody>
+          ${rows.map((e) => `
+            <tr>
+              <td>${esc(e.date)}</td>
+              <td>${esc(e.vendor)}${e.memo ? " — " + esc(e.memo) : ""}</td>
+              <td>${esc(e.debitAccount)}</td>
+              <td class="num">${yen(e.debitAmount)}</td>
+              <td>${esc(e.creditAccount)}</td>
+              <td class="num">${yen(e.creditAmount)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+  }
+
+  function ledgerHtml() {
+    let out = `<h1>総勘定元帳</h1><div class="p-sub">祥燿　出力日：${today()}</div>`;
+    for (const a of ACCOUNTS) {
+      const rows = state.entries
+        .filter((e) => e.debitAccount === a.name || e.creditAccount === a.name)
+        .sort(byDate);
+      if (rows.length === 0) continue;
+      const increasesOnDebit = a.type === "asset" || a.type === "expense";
+      let balance = 0;
+      const body = rows.map((e) => {
+        const isDebit = e.debitAccount === a.name;
+        const amt = Number(isDebit ? e.debitAmount : e.creditAmount) || 0;
+        balance += isDebit === increasesOnDebit ? amt : -amt;
+        return `
+          <tr>
+            <td>${esc(e.date)}</td>
+            <td>${esc(e.vendor) || esc(e.memo) || "—"}</td>
+            <td class="num">${isDebit ? yen(amt) : ""}</td>
+            <td class="num">${!isDebit ? yen(amt) : ""}</td>
+            <td class="num">${yen(balance)}</td>
+          </tr>`;
+      }).join("");
+      out += `
+        <h2>${esc(a.name)}</h2>
+        <table>
+          <thead><tr><th>日付</th><th>摘要</th><th>借方</th><th>貸方</th><th>残高</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>`;
+    }
+    return out;
+  }
+
+  function doPrint(html) {
+    let area = document.getElementById("printArea");
+    if (!area) {
+      area = document.createElement("div");
+      area.id = "printArea";
+      document.body.appendChild(area);
+    }
+    area.innerHTML = html;
+    document.body.classList.add("printing");
+    const cleanup = () => {
+      document.body.classList.remove("printing");
+      area.innerHTML = "";
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    setTimeout(() => window.print(), 100);
+  }
+
+  function addButton(label, onClick) {
+    const wrap = document.createElement("div");
+    wrap.className = "print-btn-wrap";
+    const b = document.createElement("button");
+    b.className = "btn btn-primary";
+    b.textContent = label;
+    b.onclick = onClick;
+    wrap.appendChild(b);
+    content.insertBefore(wrap, content.firstChild);
+  }
+
+  const baseRender = render;
+  render = function () {
+    baseRender();
+    if (state.entries.length === 0) return;
+    if (state.tab === "journal") addButton("仕訳帳を印刷・PDF保存", () => doPrint(journalHtml()));
+    if (state.tab === "ledger") addButton("全科目の元帳を印刷・PDF保存", () => doPrint(ledgerHtml()));
+  };
+  render();
+})();
