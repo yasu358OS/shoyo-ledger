@@ -602,3 +602,105 @@ render();
   };
   render();
 })();
+/* ---------- バックアップ（書き出し・読み込み）（app.js の一番最後に追加） ---------- */
+(function () {
+  function exportData() {
+    const json = JSON.stringify(
+      { app: "shoyo-ledger", version: 1, exportedAt: new Date().toISOString(), entries: state.entries },
+      null,
+      2
+    );
+    const name = `shoyo-ledger-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([json], name, { type: "application/json" });
+
+    // iPhone：共有シート（メール・ファイルに保存など）を開く
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: name }).catch(() => {});
+      return;
+    }
+    // 共有が使えない場合：ダウンロード
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function importData(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        const list = Array.isArray(data) ? data : data.entries;
+        if (!Array.isArray(list)) throw new Error("形式が違います");
+        const valid = list.filter(
+          (e) => e && e.date && ACCOUNT_TYPE[e.debitAccount] && ACCOUNT_TYPE[e.creditAccount]
+        );
+        const ids = new Set(state.entries.map((e) => e.id));
+        const add = valid
+          .filter((e) => !e.id || !ids.has(e.id))
+          .map((e) => ({
+            ...e,
+            id: e.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            debitAmount: Number(e.debitAmount) || 0,
+            creditAmount: Number(e.creditAmount) || 0,
+          }));
+        if (add.length === 0) {
+          alert("追加できる仕訳はありませんでした（すでに入っているか、形式が違います）。");
+          return;
+        }
+        if (!confirm(`${add.length}件の仕訳を追加します。よろしいですか？`)) return;
+        state.entries.push(...add);
+        saveEntries(state.entries);
+        render();
+        alert(`${add.length}件を読み込みました。`);
+      } catch (e) {
+        alert("読み込めませんでした。書き出したバックアップのファイルを選んでください。");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function addBackupButtons() {
+    const wrap = document.createElement("div");
+    wrap.className = "print-btn-wrap";
+    wrap.style.display = "flex";
+    wrap.style.gap = "8px";
+    wrap.style.justifyContent = "flex-end";
+    wrap.style.flexWrap = "wrap";
+
+    const exp = document.createElement("button");
+    exp.className = "btn btn-primary";
+    exp.textContent = "バックアップを書き出す";
+    exp.onclick = exportData;
+
+    const imp = document.createElement("button");
+    imp.className = "btn btn-ghost";
+    imp.textContent = "バックアップを読み込む";
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.hidden = true;
+    input.onchange = (e) => importData(e.target.files && e.target.files[0]);
+    imp.onclick = () => input.click();
+
+    wrap.appendChild(exp);
+    wrap.appendChild(imp);
+    wrap.appendChild(input);
+    content.insertBefore(wrap, content.firstChild);
+  }
+
+  const baseRender2 = render;
+  render = function () {
+    baseRender2();
+    if (state.tab === "summary") addBackupButtons();
+  };
+  render();
+})();
+
+
